@@ -139,3 +139,7 @@ The tests use local command shims. They do not access the network, the real Pi p
 Static analysis and a constrained startup test reduce risk but cannot prove that a package is benign. The package manager still processes untrusted metadata and archives during isolated staging. Review the source, target version, retained artifacts, and local changes before approving updates.
 
 See [`docs/`](docs/) for the detailed workflow and provider-scanning design.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
