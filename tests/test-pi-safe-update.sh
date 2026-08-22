@@ -173,8 +173,8 @@ PY
       echo '{"name":"test-dep","version":"2.0.0"}' > "$node_modules_dir/test-dep/package.json"
       echo 'dependency v2' > "$node_modules_dir/test-dep/index.js"
     else
-      mkdir -p "$staging_dir/home/.Trash"
-      [ -d "$node_modules_dir/test-dep" ] && mv "$node_modules_dir/test-dep" "$staging_dir/home/.Trash/test-dep"
+      mkdir -p "$staging_dir/.trash"
+      [ -d "$node_modules_dir/test-dep" ] && mv "$node_modules_dir/test-dep" "$staging_dir/.trash/test-dep"
     fi
   fi
   if [ "${FAKE_UNRELATED_CHANGE:-}" = "1" ]; then
