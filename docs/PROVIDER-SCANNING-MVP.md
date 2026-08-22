@@ -463,7 +463,7 @@ Implemented files:
 - `provider-scan-mvp.sh`
 - `tests/test-provider-scan-mvp.sh`
 
-Local tests pass with **24 provider-harness tests** and **52 updater assertions**. A live update attempt for `npm:pi-subagents` from `0.35.1` to `0.37.0` staged successfully. Its new root `.bin` links (`pi-subagents`, `jiti`, and `yaml`) were traced to declared package `bin` targets and downgraded to review findings. The package's runtime process-spawning code was also recorded as a review finding, not an automatic block, after correcting a report-heading classification bug. The candidate then reached the read-only Pi review, which failed because the generated diff exceeded the review model's context window; promotion was not attempted. The live installation remained at `0.35.1`; settings remained unchanged.
+Local tests pass with **24 provider-harness tests** and **44 updater assertions**. A live update attempt for `npm:pi-subagents` from `0.35.1` to `0.37.0` staged successfully. Its new root `.bin` links (`pi-subagents`, `jiti`, and `yaml`) were traced to declared package `bin` targets and downgraded to review findings. The package's runtime process-spawning code was also recorded as a review finding, not an automatic block, after correcting a report-heading classification bug. The candidate then reached the read-only Pi review, which failed because the generated diff exceeded the review model's context window; promotion was not attempted. The live installation remained at `0.35.1`; settings remained unchanged.
 
 The rejected staged candidate was then copied outside the live Pi directory and scanned by the provider harness. Results:
 

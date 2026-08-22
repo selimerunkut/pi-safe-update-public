@@ -190,7 +190,7 @@ test_only_missing_cli_is_not_clean() {
 
 test_tokens_are_scrubbed() {
   setup
-  run_harness tokens SNYK_TOKEN=top-secret-value SEMGREP_APP_TOKEN=top-secret-value SOCKET_SECURITY_API_KEY=top-secret-value
+  run_harness tokens SNYK_TOKEN=fixture-token-value SEMGREP_APP_TOKEN=fixture-token-value SOCKET_SECURITY_API_KEY=fixture-token-value
   assert_true "token-containing provider outputs are scrubbed" bash -c "! grep -R -q -- 'top-secret-value' '$OUT/tokens'"
   teardown
 }
