@@ -1,0 +1,27 @@
+# Optional overrides for pi-safe-update.
+# The updater does not load this file automatically. Source it explicitly:
+#   set -a; source examples/environment.example; set +a
+# Never put provider tokens or other secrets in this file.
+
+PI_AGENT_DIR="${HOME}/.pi/agent"
+PROVIDER_SCANS="auto"
+# PROVIDER_SCAN_ONLY="snyk"
+PROVIDER_TIMEOUT="120"
+SECURITY_TIMEOUT="300"
+SMOKE_TIMEOUT="30"
+STAGING_TIMEOUT="300"
+
+# Uncomment only when overriding system tools in your environment.
+# PI="pi"
+# NPM="npm"
+# GIT="git"
+# PYTHON3="python3"
+# TIMEOUT_CMD="timeout"
+# SANDBOX_EXEC="sandbox-exec"
+# RG="rg"
+# OSV_SCANNER="osv-scanner"
+# LOCK_DIR="${PI_AGENT_DIR}/.pi-safe-update"
+
+# Authenticate provider CLIs using their own supported login or secret manager.
+# Do not add SNYK_TOKEN, SEMGREP_APP_TOKEN, SOCKET_SECURITY_API_KEY, or any
+# other credential here.

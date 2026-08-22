@@ -1,0 +1,4 @@
+.pi-subagents/
+.env
+.env.*
+!.env.example
