@@ -292,6 +292,69 @@ class Updater:
         value = {"exists": package.is_dir(), "files": sorted(self.files(package)), "hash": hash_tree(package)}
         self.write_json(f"{label}-manifest.json", value)
 
+    @staticmethod
+    def package_dependencies(package: Path) -> set[str]:
+        if not package.is_dir():
+            return set()
+        try:
+            data = json.loads((package / "package.json").read_text())
+        except Exception:
+            return set()
+        dependencies: set[str] = set()
+        for section in ("dependencies", "optionalDependencies", "peerDependencies"):
+            values = data.get(section, {})
+            if isinstance(values, dict):
+                dependencies.update(name for name in values if isinstance(name, str))
+        return dependencies
+
+    @staticmethod
+    def resolve_dependency(package: Path, dependency: str, modules: Path) -> Path | None:
+        """Resolve a dependency directory without loading any package code."""
+        cursor = package
+        boundary = modules.parent
+        while cursor != boundary:
+            candidate = (cursor / dependency if cursor.name == "node_modules"
+                         else cursor / "node_modules" / dependency)
+            if candidate.is_dir():
+                return candidate
+            cursor = cursor.parent
+        return None
+
+    def dependency_tree(self, root: Path, selected: str, roots: set[str]) -> dict[Path, str]:
+        """Return installed package paths reachable from the selected package.
+
+        npm may flatten transitive dependencies to the profile's top-level
+        node_modules directory or nest them below another dependency.  Track
+        both layouts and map each path to the top-level tree that promotion
+        must replace.
+        """
+        modules = self.c.modules(root)
+        selected_package = modules / selected
+        if not selected_package.is_dir():
+            return {}
+        pending: list[Path] = []
+        for dependency in sorted(roots):
+            resolved = self.resolve_dependency(selected_package, dependency, modules)
+            if resolved:
+                pending.append(resolved)
+        found: dict[Path, str] = {}
+        while pending:
+            package = pending.pop()
+            key = package.absolute()
+            if key in found or not package.is_dir():
+                continue
+            relative = package.relative_to(modules)
+            parts = relative.parts
+            if not parts:
+                continue
+            tree = "/".join(parts[:2]) if parts[0].startswith("@") and len(parts) > 1 else parts[0]
+            found[key] = tree
+            for dependency in sorted(self.package_dependencies(package)):
+                resolved = self.resolve_dependency(package, dependency, modules)
+                if resolved:
+                    pending.append(resolved)
+        return found
+
     def stage(self, source: str, target: str, name: str, entry: str) -> Path:
         assert self.run_dir
         stage = self.run_dir / "staging"
@@ -340,14 +403,11 @@ class Updater:
             "install_target": install_target, "live_pkg_hash": live_hash, "live_settings_hash": settings_hash,
             "new_entry": new_entry})
 
-        package_data: dict[str, Any] = {}
-        with contextlib.suppress(Exception):
-            package_data = json.loads((staged_package / "package.json").read_text())
-        dependencies: set[str] = set()
-        for section in ("dependencies", "optionalDependencies", "peerDependencies"):
-            values = package_data.get(section, {})
-            if isinstance(values, dict):
-                dependencies.update(k for k in values if isinstance(k, str))
+        dependency_roots = self.package_dependencies(live_package) | self.package_dependencies(staged_package)
+        dependency_maps = [
+            (self.c.agent, self.dependency_tree(self.c.agent, name, dependency_roots)),
+            (stage, self.dependency_tree(stage, name, dependency_roots)),
+        ]
         live_files = self.files(self.c.agent, exclude_updater=True)
         staged_files = self.files(stage)
         selected_prefix = f"{self.c.node_relative}/{name}"
@@ -361,11 +421,13 @@ class Updater:
         def selected(path: str) -> bool:
             return path == selected_prefix or path.startswith(selected_prefix + "/")
         def dependency_for(path: str) -> str | None:
-            for dep in dependencies:
-                prefix = f"{modules_prefix}{dep}"
-                if path == prefix or path.startswith(prefix + "/"):
-                    return dep
-            return None
+            matches: list[tuple[int, str]] = []
+            for base, dependency_map in dependency_maps:
+                absolute = (base / path).absolute()
+                for package, tree in dependency_map.items():
+                    if absolute == package or package in absolute.parents:
+                        matches.append((len(package.parts), tree))
+            return max(matches)[1] if matches else None
         def copied(path: str) -> bool:
             return path == "settings.json" or any(path.startswith(prefix) for prefix in copied_prefixes)
 
@@ -496,7 +558,12 @@ class Updater:
                 high_confidence = any(
                     category in {"Long whitespace followed by code", "Invisible or control Unicode", "Suspicious base64 decode literals"}
                     for category, _ in sections
-                ) or re.search(r"(?:child_process|exec|spawn).*(?:curl|wget).*(?:sh|bash)|(?:curl|wget).*(?:sh|bash)|(?:AWS_SECRET_ACCESS_KEY|OPENAI_API_KEY|PI_TOKEN|SSH_PRIVATE_KEY).*(?:fetch|https?://|request|axios)", evidence, re.I)
+                ) or re.search(
+                    r"(?:curl|wget)[^\\n]*(?:\\|\\s*)(?:sh|bash|zsh)\\b|"
+                    r"(?:AWS_SECRET_ACCESS_KEY|OPENAI_API_KEY|PI_TOKEN|SSH_PRIVATE_KEY)[^\\n]*(?:fetch|https?://|request|axios)",
+                    evidence,
+                    re.I,
+                )
                 if high_confidence:
                     blocking.append(f"hidden-code-scan found high-confidence malicious indicators (exit {hidden_rc})")
                 else:
@@ -796,7 +863,11 @@ class Updater:
             version = json.loads(package.read_text()).get("version")
             if not isinstance(version, str) or not version:
                 raise OSError("staged package has no exact version")
-            new_entry = entry if entry.startswith(("github:", "git:")) else f"{name}@{version}"
+            if entry.startswith(("github:", "git:")):
+                new_entry = entry
+            else:
+                scheme = "npm:" if entry.startswith("npm:") else ""
+                new_entry = f"{scheme}{name}@{version}"
             settings = json.loads(self.c.settings.read_text())
             packages = settings.get("packages", [])
             if packages.count(entry) != 1:

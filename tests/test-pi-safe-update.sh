@@ -162,13 +162,13 @@ json.dump(p, open(sys.argv[1], 'w'))
 PY
     echo 'console.log("prepare")' > "$node_modules_dir/$pkg_name/prepare.mjs"
   fi
-  if [ "${FAKE_DEPENDENCY_CHANGE:-}" = "1" ] || [ "${FAKE_DEPENDENCY_DELETE:-}" = "1" ]; then
+  if [ "${FAKE_DEPENDENCY_CHANGE:-}" = "1" ] || [ "${FAKE_DEPENDENCY_DELETE:-}" = "1" ] || [ "${FAKE_TRANSITIVE_DEPENDENCY_CHANGE:-}" = "1" ]; then
     python3 - "$node_modules_dir/$pkg_name/package.json" <<'PY'
 import json, sys
 p = json.load(open(sys.argv[1])); p['dependencies'] = {'test-dep': '^2.0.0'}
 json.dump(p, open(sys.argv[1], 'w'))
 PY
-    if [ "${FAKE_DEPENDENCY_CHANGE:-}" = "1" ]; then
+    if [ "${FAKE_DEPENDENCY_CHANGE:-}" = "1" ] || [ "${FAKE_TRANSITIVE_DEPENDENCY_CHANGE:-}" = "1" ]; then
       mkdir -p "$node_modules_dir/test-dep"
       echo '{"name":"test-dep","version":"2.0.0"}' > "$node_modules_dir/test-dep/package.json"
       echo 'dependency v2' > "$node_modules_dir/test-dep/index.js"
@@ -176,6 +176,12 @@ PY
       trash_rel="home/.trash"
       mkdir -p "$staging_dir/$trash_rel"
       [ -d "$node_modules_dir/test-dep" ] && mv "$node_modules_dir/test-dep" "$staging_dir/$trash_rel/test-dep"
+    fi
+    if [ "${FAKE_TRANSITIVE_DEPENDENCY_CHANGE:-}" = "1" ]; then
+      printf '{"name":"test-dep","version":"2.0.0","dependencies":{"nested-dep":"^2.0.0"}}\n' > "$node_modules_dir/test-dep/package.json"
+      mkdir -p "$node_modules_dir/nested-dep"
+      printf '{"name":"nested-dep","version":"2.0.0"}\n' > "$node_modules_dir/nested-dep/package.json"
+      echo 'nested dependency v2' > "$node_modules_dir/nested-dep/index.js"
     fi
   fi
   if [ "${FAKE_UNRELATED_CHANGE:-}" = "1" ]; then
@@ -586,6 +592,27 @@ for p in data.get('packages', []):
   teardown_test
 }
 
+# ── Preserve the npm: source scheme during promotion ───────────────────────
+test_update_preserves_npm_scheme() {
+  setup_test
+  cat > "$FAKE_PI_DIR/settings.json" <<'EOF'
+{
+  "packages": ["npm:test-pkg@1.0.0"]
+}
+EOF
+
+  local out entry
+  out=$(run_safe_update "" "update" "npm:test-pkg" "--to" "2.0.0")
+  entry=$(python3 -c "import json; print(json.load(open('$FAKE_PI_DIR/settings.json'))['packages'][0])" 2>/dev/null || echo "none")
+  if output_contains "$out" "promot" && [ "$entry" = "npm:test-pkg@2.0.0" ]; then
+    pass "npm: scheme preserved in settings"
+  else
+    fail "npm: scheme should be preserved in settings, got: $entry"
+  fi
+
+  teardown_test
+}
+
 # ── Update with --to latest ────────────────────────────────────────────────
 test_update_with_target() {
   setup_test
@@ -793,6 +820,26 @@ test_confirmed_malware_fixture_blocks() {
     pass "confirmed malware fixture blocks promotion"
   else
     fail "confirmed malware fixture must block promotion"
+  fi
+  teardown_test
+}
+
+test_hidden_scan_runtime_capability_is_not_malware() {
+  setup_test
+  cat > "$TEST_TEMP/hidden-scan" <<'EOF'
+#!/usr/bin/env bash
+echo "== Suspicious JS execution primitives =="
+echo '/candidate/index.ts:1: const child = spawn("curl", args, { windowsHide: true });'
+exit 1
+EOF
+  chmod +x "$TEST_TEMP/hidden-scan"
+  local out
+  out=$(run_safe_update "export HIDDEN_CODE_SCAN='$TEST_TEMP/hidden-scan'" update test-pkg)
+  if output_contains "$out" "Promotion: complete" \
+    && grep -q "expected runtime capabilities" "$LOCK_DIR/runs"/*/artifacts/deterministic-scan.json; then
+    pass "expected child process capability does not block promotion"
+  else
+    fail "expected child process capability must not be treated as malware"
   fi
   teardown_test
 }
@@ -1167,6 +1214,25 @@ test_dependency_tree_promotion() {
   teardown_test
 }
 
+test_transitive_dependency_tree_promotion() {
+  setup_test
+  mkdir -p "$FAKE_PI_DIR/node_modules/test-dep" "$FAKE_PI_DIR/node_modules/nested-dep"
+  printf '{"name":"test-dep","version":"1.0.0"}\n' > "$FAKE_PI_DIR/node_modules/test-dep/package.json"
+  printf 'dependency v1\n' > "$FAKE_PI_DIR/node_modules/test-dep/index.js"
+  printf '{"name":"nested-dep","version":"1.0.0"}\n' > "$FAKE_PI_DIR/node_modules/nested-dep/package.json"
+  printf 'nested dependency v1\n' > "$FAKE_PI_DIR/node_modules/nested-dep/index.js"
+  local out
+  out=$(run_safe_update 'export FAKE_TRANSITIVE_DEPENDENCY_CHANGE=1' update test-pkg)
+  if output_contains "$out" "Promotion: complete" \
+    && [ "$(node -p "require('$FAKE_PI_DIR/node_modules/nested-dep/package.json').version")" = "2.0.0" ] \
+    && grep -q nested-dep "$LOCK_DIR/runs"/*/artifacts/promotion-trees.txt; then
+    pass "transitive dependency tree is promoted"
+  else
+    fail "transitive dependency tree should be promoted"
+  fi
+  teardown_test
+}
+
 test_dependency_deletion_and_unrelated_change_policy() {
   setup_test
   mkdir -p "$FAKE_PI_DIR/node_modules/test-dep"
@@ -1220,6 +1286,7 @@ test_update_github_invalid_sha
 
 header "Update Paths"
 test_update_happy_path
+test_update_preserves_npm_scheme
 test_update_with_target
 test_update_github_source_valid
 test_update_duplicate_flags
@@ -1234,8 +1301,10 @@ test_security_review_uses_bounded_inventory
 test_policy_checks_are_reviewed_not_suppressed
 test_lifecycle_review_pass_fail_and_malformed
 test_confirmed_malware_fixture_blocks
+test_hidden_scan_runtime_capability_is_not_malware
 test_review_can_resolve_benign_finding
 test_dependency_tree_promotion
+test_transitive_dependency_tree_promotion
 test_dependency_deletion_and_unrelated_change_policy
 test_extension_smoke_artifacts
 
